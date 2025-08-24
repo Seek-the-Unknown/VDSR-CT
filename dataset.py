@@ -676,13 +676,20 @@ class TestImageDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict:
         filename = self.image_file_names[index]
+
+     
+
         hr_image_path = os.path.join(self.hr_dir, filename)
         lr_image_path = os.path.join(self.lr_dir, filename)
+        
 
         try:
             # 直接从 .npy 文件加载 HR 和 LR
             hr_image = np.load(hr_image_path)
             lr_image = np.load(lr_image_path)
+            if index < 5: # 只打印前5个样本的信息就足够了
+                print(f"Sample {index}: HR min={np.min(hr_image)}, HR max={np.max(hr_image)}")
+                print(f"Sample {index}: LR min={np.min(lr_image)}, LR max={np.max(lr_image)}")
         except Exception as e:
             print(f"Error loading .npy test file: {hr_image_path}. Skipping. Error: {e}")
             return None
@@ -691,6 +698,7 @@ class TestImageDataset(Dataset):
         lr_tensor = imgproc.image2tensor(lr_image, range_norm=False, half=False)
         hr_tensor = imgproc.image2tensor(hr_image, range_norm=False, half=False)
 
+      
         return {"lr": lr_tensor, "hr": hr_tensor}
 
     def __len__(self) -> int:

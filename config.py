@@ -174,49 +174,70 @@ from torch.backends import cudnn
 random.seed(0)
 torch.manual_seed(0)
 np.random.seed(0)
+
 # Use GPU for training by default
 device = torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
+
 # Turning on when the image size does not change during training can speed up training
 cudnn.benchmark = True
-# Image magnification factor
-upscale_factor = 4
-# Current configuration parameter method
-mode = "valid"
-# Experiment name, easy to save weights and log files
-exp_name = "vdsr_ct_lidc_final" # 最终版实验名称
 
+# Image magnification factor
+# 您可以根据需要将其改为 2, 3, 或 4
+upscale_factor = 4 
+
+# Experiment name, easy to save weights and log files
+exp_name = "VDSR_CT_FINAL_TRAIN" # 使用一个全新的实验名称，避免与旧的混淆
+
+# Current configuration parameter method
+# 当您要训练时，请确保这里是 "train"
+# 当您要用 validate.py 或 vdsr_visualize.py 测试时，再将其改为 "valid"
+mode = "valid" 
+
+# ==============================================================================
+#                              训练模式配置
+# ==============================================================================
 if mode == "train":
-    # Dataset
-    # 【最终正确配置】训练、验证、测试集均指向同源的CT数据
+    # --- 数据集路径 ---
     train_image_dir = "data/CT_Train"
     valid_image_dir = "data/CT_Valid"
-    # 注意：TestImageDataset 需要的是直接包含HR图像的路径
-    test_image_dir = "data/CT_Test" 
+    test_image_dir  = "data/CT_Test" 
 
-    image_size = 41  # 训练时裁剪的图像块大小
+    # --- 训练参数 ---
+    image_size = 41   # 训练时裁剪的图像块大小
     batch_size = 64
-    num_workers = 4
+    num_workers = 4   # 根据您的CPU核心数调整
 
+    # --- 恢复训练设置（保持默认即可） ---
     start_epoch = 0
     resume = ""
 
-    epochs = 100 # 建议至少50-80轮
+    # --- 训练周期 ---
+    # 【重要】为了让模型充分学习，建议至少训练 80 轮
+    epochs = 200 
 
-    # Optimizer (Adam)
-    model_lr = 1e-4 # 使用一个较小的学习率
+    # --- 优化器 (Adam) ---
+    # 这是适合Adam的稳定学习率
+    model_lr = 1e-3 
     model_betas = (0.9, 0.999)
 
-    # Scheduler
+    # --- 学习率调度器 ---
+    # 每 20 个 epoch，学习率衰减为原来的 0.5 倍
     lr_scheduler_step_size = 20
-    lr_scheduler_gamma = 0.5 # 可以温和一些，每次衰减一半
+    lr_scheduler_gamma = 0.5 
 
-    # gradient clipping constant
-    clip_gradient = 0.1 # 可以适当放宽
+    # --- 梯度裁剪 ---
+    # 这是适合Adam的固定值梯度裁剪
+    clip_gradient = 0.1 
 
+    # --- 日志打印频率 ---
     print_frequency = 100
 
+# ==============================================================================
+#                              验证/测试模式配置
+# ==============================================================================
 if mode == "valid":
     # 验证模式，用于评估最终的 best.pth.tar 模型
     sr_dir = f"results/test/{exp_name}"
-    hr_dir = "data/CT_Test/hr" # 使用我们独立的CT测试集进行最终评估
+    # hr_dir 和 model_path 应该指向您成功训练后的结果
+    hr_dir = "data/CT_Test/hr" 
     model_path = f"results/{exp_name}/best.pth.tar"

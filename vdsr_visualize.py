@@ -247,133 +247,112 @@ import torch
 import matplotlib.pyplot as plt
 from model import VDSR
 import math
+import os
+import config
 
 # 设置中文字体支持
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-# --- 这个函数现在只用于【可视化】，不再参与模型计算 ---
-def convert_to_displayable_uint8(image_data):
-    """将任意范围的图像数据（HU值或[0,1]浮点数）转换为可供显示和评估的uint8图像。"""
-    # 如果输入是浮点数[0,1]，先转回[0,255]
-    if image_data.dtype == np.float32 or image_data.dtype == np.float64:
-        image_data = np.clip(image_data, 0.0, 1.0) * 255.0
-        
-    # 如果输入是HU值，使用自动窗位
-    else:
-        lower_bound = np.percentile(image_data, 1.0)
-        upper_bound = np.percentile(image_data, 99.0)
-        if upper_bound == lower_bound:
-            return np.zeros_like(image_data, dtype=np.uint8)
-        image_data = np.clip(image_data, lower_bound, upper_bound)
-        image_data = (image_data - lower_bound) / (upper_bound - lower_bound) * 255.0
-        
-    return image_data.astype(np.uint8)
-
-
-def calculate_psnr(img1_uint8, img2_uint8):
-    """计算两张uint8图像之间的PSNR值。"""
-    img1 = img1_uint8.astype(np.float64)
-    img2 = img2_uint8.astype(np.float64)
+def calculate_psnr(img1, img2):
+    """在[0, 1]范围的浮点数图像上计算PSNR，与训练时保持一致。"""
     mse = np.mean((img1 - img2) ** 2)
     if mse == 0:
         return float('inf')
-    return 20 * math.log10(255.0 / math.sqrt(mse))
-
+    return 20 * math.log10(1.0 / math.sqrt(mse))
 
 def main():
     # --- 配置 ---
-    model_path = "E:/VDSR-PyTorch-master/results/vdsr_ct_lidc_final/best.pth.tar"
-    input_path = "E:/VDSR-PyTorch-master/data/CT_Test/hr/LIDC-IDRI-0002_3000522.000000-NA-04919_0009.npy"
-    save_path = "E:/VDSR-PyTorch-master/output_image/sr_result_CORRECT.png"
-    scale = 3
+    # 【重要】请确保这里的 exp_name 与您成功训练时 config.py 中的一致
+    exp_name = "VDSR_CT_FINAL_TRAIN" 
+    model_path = f"results/{exp_name}/best.pth.tar"
+    
+    # 【重要】指定包含'hr'和'lr'子文件夹的测试集根目录
+    test_data_dir = "data/CT_Test"
+    # 指定您想可视化的文件名
+    image_filename = "LIDC-IDRI-0002_3000522.000000-NA-04919_0036.npy"
+    
+    save_path = f"output_image/FINAL_RESULT_WITH_LR_{image_filename.replace('.npy', '.png')}"
 
+    # --- 设备和模型加载 ---
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"使用的设备: {device}")
 
-    # --- 加载模型 ---
     print("正在加载模型...")
     model = VDSR().to(device)
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
-    print("模型加载完成。")
+    print(f"模型加载完成: {model_path}")
 
-    # === 1. 数据加载与准备（严格遵循训练流程） ===
-    print(f"正在从 {input_path} 加载并处理图像...")
+    # === 1. 数据加载与准备（严格遵循训练验证流程） ===
+    hr_path = os.path.join(test_data_dir, "hr", image_filename)
+    lr_path = os.path.join(test_data_dir, "lr", image_filename)
     
-    # a) 加载原始 .npy 数据 (HU值)
-    hr_raw_hu = np.load(input_path)
-    if hr_raw_hu.ndim != 2: hr_raw_hu = hr_raw_hu[0]
-        
-    # b) 【核心】直接将HU值线性归一化到[0, 1]浮点数，这才是送入模型的数据
-    min_val, max_val = hr_raw_hu.min(), hr_raw_hu.max()
-    hr_norm = (hr_raw_hu - min_val) / (max_val - min_val)
-    hr_norm = hr_norm.astype(np.float32)
+    print(f"正在加载 HR 图像: {hr_path}")
+    print(f"正在加载 LR 图像: {lr_path}")
 
-    # c) 在归一化的浮点数上进行下采样和Bicubic插值
-    h, w = hr_norm.shape
-    lr_norm = cv2.resize(hr_norm, (w // scale, h // scale), interpolation=cv2.INTER_CUBIC)
-    bicubic_norm = cv2.resize(lr_norm, (w, h), interpolation=cv2.INTER_CUBIC)
+    # 直接加载预处理好的、[0,1]范围的 HR 和 LR .npy 文件
+    hr_norm = np.load(hr_path)
+    # bicubic_input_norm 实际上就是训练时所用的LR图像
+    bicubic_input_norm = np.load(lr_path) 
+    
+    # 为了可视化，我们需要一个单独的、从HR动态生成的LR图像
+    h_hr, w_hr = hr_norm.shape
+    lr_downsampled = cv2.resize(hr_norm, (w_hr // config.upscale_factor, h_hr // config.upscale_factor), interpolation=cv2.INTER_CUBIC)
+
 
     # === 2. 模型推理 ===
     print("正在进行VDSR超分辨率重建...")
-    input_tensor = torch.from_numpy(bicubic_norm).unsqueeze(0).unsqueeze(0).to(device)
+    input_tensor = torch.from_numpy(bicubic_input_norm).unsqueeze(0).unsqueeze(0).to(device, dtype=torch.float)
+    
     with torch.no_grad():
-        residual = model(input_tensor)
-        # 在归一化的浮点数上加上残差
-        sr_norm_tensor = input_tensor + residual
+        predicted_residual = model(input_tensor)
+        sr_tensor = input_tensor + predicted_residual
     print("超分完成。")
 
-    # 将输出转回numpy浮点数
-    sr_norm = sr_norm_tensor.squeeze().cpu().numpy()
-
-    # === 3. 准备可视化和评估 ===
-    # 现在才将所有图像（原图、Bicubic、SR结果）转换为可供显示的 uint8 格式
-    hr_display = convert_to_displayable_uint8(hr_raw_hu)
-    bicubic_display = convert_to_displayable_uint8(bicubic_norm)
-    sr_display = convert_to_displayable_uint8(sr_norm)
+    # 将所有图像转为numpy，确保它们都在[0,1]范围
+    sr_norm = np.clip(sr_tensor.squeeze().cpu().numpy(), 0, 1)
     
-    # 低分辨率图也需要可视化
-    lr_display = convert_to_displayable_uint8(lr_norm)
-    resized_lr_display = cv2.resize(lr_display, (w, h), interpolation=cv2.INTER_NEAREST)
-
-
-    # === 4. 计算PSNR ===
-    # 在转换后的 uint8 图像上计算PSNR，这符合常规评估标准
+    # === 3. 计算PSNR（在[0,1]浮点数上计算，与训练日志对齐） ===
     print("正在计算 PSNR...")
-    psnr_bicubic = calculate_psnr(bicubic_display, hr_display)
-    psnr_vdsr = calculate_psnr(sr_display, hr_display)
+    psnr_bicubic = calculate_psnr(bicubic_input_norm, hr_norm)
+    psnr_vdsr = calculate_psnr(sr_norm, hr_norm)
     
     print(f"Bicubic PSNR: {psnr_bicubic:.2f} dB")
-    print(f"VDSR PSNR: {psnr_vdsr:.2f} dB") # 这次的结果应该会超过Bicubic，接近29dB
+    print(f"VDSR PSNR: {psnr_vdsr:.2f} dB")
 
-    # === 5. 可视化 ===
+    # === 4. 可视化 ===
+    # 将[0,1]的浮点图转换为用于显示的[0,255]整数图
+    hr_display = (hr_norm * 255.0).astype(np.uint8)
+    # 将下采样的LR图放大以供显示
+    lr_display_resized = cv2.resize((lr_downsampled * 255.0).astype(np.uint8), (w_hr, h_hr), interpolation=cv2.INTER_NEAREST)
+    bicubic_display = (bicubic_input_norm * 255.0).astype(np.uint8)
+    sr_display = (sr_norm * 255.0).astype(np.uint8)
+    
     print("正在生成对比可视化图...")
     plt.figure(figsize=(20, 5))
     titles = [
-        f'低分辨率图 (LR)\n(放大后)', 
+        f'低分辨率图 (LR)\n(放大后)',
         f'Bicubic 插值结果\nPSNR: {psnr_bicubic:.2f} dB', 
         f'VDSR 超分结果 (SR)\nPSNR: {psnr_vdsr:.2f} dB', 
         '高清原图 (HR)'
     ]
-    images = [resized_lr_display, bicubic_display, sr_display, hr_display]
+    images = [lr_display_resized, bicubic_display, sr_display, hr_display]
 
     for i in range(4):
         plt.subplot(1, 4, i + 1)
-        plt.imshow(images[i], cmap='gray')
+        plt.imshow(images[i], cmap='gray', vmin=0, vmax=255)
         plt.title(titles[i], fontsize=14)
         plt.axis('off')
 
     plt.tight_layout(pad=0.5)
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"可视化图已保存至: {save_path}")
+    if not os.path.exists('output_image'):
+        os.makedirs('output_image')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"可视化图已保存至: {save_path}")
     plt.show()
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        print(f"\n程序运行中发生未知错误: {e}")
+    main()

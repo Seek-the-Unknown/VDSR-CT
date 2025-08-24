@@ -57,13 +57,14 @@ class VDSR(nn.Module):
 
     # Support torch.script function
     def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
+        # print("--- DEBUG: Running the NEW _forward_impl from model.py! ---")
+        # identity = x
 
         out = self.conv1(x)
         out = self.trunk(out)
         out = self.conv2(out)
 
-        out = torch.add(out, identity)
+        # out = torch.add(out, identity)
 
         return out
 
